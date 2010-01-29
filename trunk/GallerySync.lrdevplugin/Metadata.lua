@@ -23,13 +23,15 @@ return {
             version = 3,
         },
         {
-            id = 'needs_syncing',
-            title = 'Needs forced syncing?',
+            id = 'sync_options',
+            title = 'Sync options',
             dataType = 'string',
-            version = 1,
+            searchable = true,
+            browsable = true,
+            version = 2,
         },
     },
-    schemaVersion = 6,
+    schemaVersion = 8,
     updateFromEarlierSchemaVersion = function( catalog, previousSchemaVersion )
         catalog:assertHasPrivateWriteAccess( "Metadata.updateFromEarlierSchemaVersion" )
         for i, photo in ipairs(catalog:findPhotosWithProperty(_G.ToolkitIdentifier,'album')) do
@@ -42,7 +44,10 @@ return {
             photo:setPropertyForPlugin(_PLUGIN, 'id', photo:getPropertyForPlugin(_G.ToolkitIdentifier, 'id'))
         end
         for i, photo in ipairs(catalog:findPhotosWithProperty(_G.ToolkitIdentifier,'needs_syncing')) do
-            photo:setPropertyForPlugin(_PLUGIN, 'id', photo:getPropertyForPlugin(_G.ToolkitIdentifier, 'needs_syncing'))
+            photo:setPropertyForPlugin(_PLUGIN, 'sync_options', nil)
+        end
+        for i, photo in ipairs(catalog:findPhotosWithProperty(_G.ToolkitIdentifier,'sync_options')) do
+            photo:setPropertyForPlugin(_PLUGIN, 'sync_options', photo:getPropertyForPlugin(_G.ToolkitIdentifier, 'sync_options'))
         end
     end,
 }

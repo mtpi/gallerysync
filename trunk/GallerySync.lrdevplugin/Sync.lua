@@ -1,6 +1,6 @@
 local LrFunctionContext = import 'LrFunctionContext'
-local LrErrors import 'LrErrors'
 local LrDialogs = import 'LrDialogs'
+local LrErrors = import 'LrErrors'
 local LrDate = import 'LrDate'
 local LrExportSession = import 'LrExportSession'
 local LrPrefs = import 'LrPrefs'
@@ -15,17 +15,17 @@ require 'TableUtils'
 require 'StringUtils'
 require 'Utils'
 
-local function getAlbum(albums, id, title)
-    for i, album in ipairs(albums) do
-        if id and album.id==id then
-            return album
-        end
-        if title and album.title==title then
-            return album
-        end
-    end
-    return nil
-end
+-- FIXME: why searching for photos with album_id set works with empty, instead of notEmpty??
+-- reported as bug to adobe
+local HAS_ALBUMID = {
+    criteria = 'sdktext:'.._G.ToolkitIdentifier..'.album_id',
+    operation = 'empty'
+}
+local NOT_DISABLED = {
+    criteria = 'sdktext:'.._G.ToolkitIdentifier..'.sync_options',
+    operation = 'noneOf',
+    value = 'disabled invalid_album invalid_id error_rendering error_uploading'
+}
 
 local function StartSync(context)
     -- TODO: better progressScope and make cancellable
@@ -45,65 +45,91 @@ local function StartSync(context)
         return
     end
     
-    local syncablePhotos
-    catalog:withReadAccessDo(function()
-        syncablePhotos = catalog:findPhotosWithProperty(_G.ToolkitIdentifier, 'album_id')
+    -- retrieve remote albums
+    local remoteAlbums = Service.findAlbums()
+    
+    -- make a space separated string with valid album IDs
+    local validAlbumIDs = ''
+    for i,album in ipairs(remoteAlbums) do
+        validAlbumIDs = validAlbumIDs .. album.id .. ' '
+    end
+    validAlbumIDs = string.gsub(validAlbumIDs, ' $', '')
+    logger:debug('validAlbumIDs='..validAlbumIDs)
+    
+    -- mark photos with invalid album_id with invalid sync_option
+    local invalidAlbumPhotos = catalog:findPhotos {
+        searchDesc = {
+            combine = 'intersect',
+            HAS_ALBUMID,
+            NOT_DISABLED,
+            { criteria = 'sdktext:'.._G.ToolkitIdentifier..'.album_id', operation = 'noneOf', value = validAlbumIDs },
+        }
+    }
+    logger:debug('invalidAlbumPhotos: ' .. #invalidAlbumPhotos)
+    catalog:withPrivateWriteAccessDo(function()
+        for i,photo in ipairs(invalidAlbumPhotos) do
+            photo:setPropertyForPlugin(_PLUGIN, 'sync_options', 'invalid_album')
+        end
     end)
     
-    -- check deleted albums (on server), update local album names, list outdated photos
+    local syncablePhotos = catalog:findPhotos {
+        searchDesc = {
+            combine = 'intersect',
+            HAS_ALBUMID,
+            NOT_DISABLED,
+        }
+    }
+    logger:debug('syncablePhotos: ' .. #syncablePhotos)
     local outdatedPhotos = {}
     for i,photo in ipairs(syncablePhotos) do
-        local albumID, ID, localAlbumName, lastEditTime, forcedSyncing
+        local photoData
         catalog:withReadAccessDo(function()
-            albumID = photo:getPropertyForPlugin(_PLUGIN, 'album_id')
-            ID = photo:getPropertyForPlugin(_PLUGIN, 'id')
-            localAlbumName = photo:getPropertyForPlugin(_PLUGIN, 'album')
-            lastEditTime = photo:getRawMetadata 'lastEditTime'
-            forcedSyncing = photo:getPropertyForPlugin(_PLUGIN, 'needs_syncing')
+            photoData = {
+				photoID = photo:getPropertyForPlugin(_PLUGIN, 'id'),
+				albumID = photo:getPropertyForPlugin(_PLUGIN, 'album_id'),
+				albumName = photo:getPropertyForPlugin(_PLUGIN, 'album'),
+				modifiedTime = photo:getRawMetadata 'lastEditTime',
+				syncOptions = photo:getPropertyForPlugin(_PLUGIN, 'sync_options'),
+            }
         end)
-        -- does photo need forcedSyncing?
-        if forcedSyncing and forcedSyncing~='' then
+        -- update album names
+        local photoAlbumName = getAlbum(remoteAlbums, photoData.albumID, nil).title
+        if photoAlbumName ~= photoData.albumName then
+            logger:debug('UPDATE photo album name')
             catalog:withPrivateWriteAccessDo(function()
-                photo:setPropertyForPlugin(_PLUGIN, 'needs_syncing', nil)
-            end)
-            lastEditTime = LrDate.currentTime()
-        end
-        local remoteAlbumName = Service.albumName(albumID)
-        -- album removed on server, disable photo syncing
-        if not remoteAlbumName then
-            catalog:withPrivateWriteAccessDo(function()
-                photo:setPropertyForPlugin(_PLUGIN, 'album_id', nil)
-                photo:setPropertyForPlugin(_PLUGIN, 'album', nil)
-                photo:setPropertyForPlugin(_PLUGIN, 'id', nil)
-                photo:setPropertyForPlugin(_PLUGIN, 'needs_syncing', nil)
-            end)
-        -- album exists. Does the photo still exists?
-        elseif ID and ID~='' and not Service.findPhoto(ID) then
-            -- doesnt exist, new upload
-            catalog:withPrivateWriteAccessDo(function()
-                photo:setPropertyForPlugin(_PLUGIN, 'id', nil)
-            end)
-            lastEditTime = LrDate.currentTime()
-        end
-        -- update local name if it's changed on server
-        if remoteAlbumName and localAlbumName~=remoteAlbumName then
-            catalog:withPrivateWriteAccessDo(function()
-                photo:setPropertyForPlugin(_PLUGIN, 'album', remoteAlbumName)
+                photo:setPropertyForPlugin(_PLUGIN, 'album', photoAlbumName)
             end)
         end
-        -- check if photo is outdated
-        if remoteAlbumName and lastEditTime > prefs.lastUpdate[catalog.path] then
-            table.insert(outdatedPhotos, photo)
+        
+        if photoData.photoID and not Service.validPhotoID(photoData.photoID) then
+            -- invalid present photo id
+            catalog:withPrivateWriteAccessDo(function()
+                photo:setPropertyForPlugin(_PLUGIN, 'sync_options', 'invalid_id')
+            end)
+        else
+            -- photo id not recorded or valid photo id
+            
+            -- check if needs resync
+            if photoData.syncOptions == 'resync' then
+                table.insert(outdatedPhotos, photo)
+                catalog:withPrivateWriteAccessDo(function()
+                    photo:setPropertyForPlugin(_PLUGIN, 'sync_options', nil)
+                end)
+            end
+            -- check if outdated
+            if photoData.modifiedTime > prefs.lastUpdate[catalog.path] then
+                table.insert(outdatedPhotos, photo)
+            end
         end
     end
-    logger:debug('Outdated Photos: ' .. #outdatedPhotos)
+    
+    logger:debug('outdatedPhotos: ' .. #outdatedPhotos)
     
     -- Export outdated photos
     if #outdatedPhotos == 0 then
         -- no outdated photo
         return
     end
-    local aPhotoFailedUpload = false
     local exportSettings = prefs.exportSettings
     exportSettings['LR_export_destinationPathSuffix'] = LrDate.timeToUserFormat(LrDate.currentTime(), '%Y%m%d%H%M%S')
     local exportSession = LrExportSession { 
@@ -118,7 +144,7 @@ local function StartSync(context)
 		    logger:debug('Rendition COMPLETE, photo path=' .. pathOrMessage)
 		    local photoData
 			
-			photo.catalog:withCatalogDo( function()
+			catalog:withReadAccessDo( function()
 			    photoData = {
     				title = photo:getFormattedMetadata 'title',
     				caption = photo:getFormattedMetadata 'caption',
@@ -142,22 +168,26 @@ local function StartSync(context)
     		    newID = Service.uploadPhoto(photoData)
 		    end
 		    
-		    -- Update photo ID only if it's changed
 		    if not newID then
-		        aPhotoFailedUpload = true
+		        -- error uploading
+		        catalog:withPrivateWriteAccessDo(function()
+                    photo:setPropertyForPlugin(_PLUGIN, 'sync_options', 'error_uploading')
+                end)
 	        elseif newID ~= photoData.photoID then
-    		    catalog:withWriteAccessDo('Update online photo ID and update time', function()
+	            -- Update photo ID only if it's changed
+    		    catalog:withPrivateWriteAccessDo(function()
                     photo:setPropertyForPlugin(_PLUGIN, 'id', newID)
                 end)
             end
-	    end
+	    else    
+	        -- error rendering photo
+	        catalog:withPrivateWriteAccessDo(function()
+                photo:setPropertyForPlugin(_PLUGIN, 'sync_options', 'error_rendering')
+            end)
+        end
     end
-    if aPhotoFailedUpload then
-        LrDialogs.message('Error', 'At least a photo failed upload.')
-    else
-        prefs.lastUpdate[catalog.path] = LrDate.currentTime()
-        prefs.lastUpdate = prefs.lastUpdate
-    end
+    prefs.lastUpdate[catalog.path] = LrDate.currentTime()
+    prefs.lastUpdate = prefs.lastUpdate
 end
 
 function GallerySyncMain(context)

@@ -75,12 +75,12 @@ function Service.login()
     end
 end
 
-function Service.findPhoto(id)
-    if getPhotoData(id) then
+function Service.validPhotoID(id)
+    local zfphotoData = getPhotoData(id)
+    if zfphotoData and zfphotoData.Owner == getLoginName() then
         return true
-    else
-        return false
     end
+    return false
 end
 
 function Service.albumName(id)
@@ -110,7 +110,7 @@ function Service.findAlbums()
         local albums = {}
         for i,element in ipairs(res.Elements) do
             if element['$type']=='PhotoSet' and element.Type=='Gallery' then
-                table.insert(albums, {title=element.Title, id=element.Id})
+                table.insert(albums, {title=element.Title, id=tostring(element.Id)})
             end
         end
         return albums
@@ -157,7 +157,7 @@ function Service.uploadPhoto(photoData)
     end
 
     local mimeChunks = {
-        { name = photoData.title, fileName = photoData.title,
+        { name = photoData.title, fileName = photoData.originalFileName,
           filePath = photoData.photoPath, contentType = 'application/octet-stream' },
     }
 

@@ -13,40 +13,21 @@ return {
 	
 	LrLibraryMenuItems = {
 	    {
-    		title = 'Online Gallery Sync',
+    		title = 'GallerySync - Run Sync',
     		file = 'Sync.lua',	        
 	    },
 	    {
-    		title = '(Re)Assign to online album',
+    		title = 'GallerySync - Assign online album',
     		file = 'AssignAlbum.lua',
     		enabledWhen = 'photosAvailable',
 	    },
 	    {
-    		title = 'Stop syncing to online album',
-    		file = 'DisableSync.lua',
+    		title = 'GallerySync - Remove photo online',
+    		file = 'RemovePhoto.lua',
     		enabledWhen = 'photosAvailable',
 	    },
 	},
-	
-	--[[
-	LrExportMenuItems = {
-		{
-			title = LOC "$$$/Flickr/EnterAPIKey=Enter Flickr API Key...",
-			file = 'EnterApiKey.lua',
-		},
-		{
-			title = LOC "$$$/Flickr/ExportUsingDefaults=Export to Flickr Using Defaults",
-			file = 'ExportToFlickr.lua',
-			enabledWhen = 'photosAvailable',
-		},
-	},
-	
-	LrExportServiceProvider = {
-		title = LOC "$$$/Flickr/Flickr=Flickr",
-		file = 'FlickrExportServiceProvider.lua',
-		builtInPresetsDir = "presets",
-	},
-    --]]
+
 	VERSION = { major=0, minor=0, revision=0, build=1, },
     
 }
