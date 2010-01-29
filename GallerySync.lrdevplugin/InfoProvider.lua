@@ -9,7 +9,7 @@ local catalog = import 'LrApplication'.activeCatalog()
 local PluginManager = {}
 
 local function updateSyncStatus(p)
-    p.syncStatus = 'Last update for this catalog: ' .. LrDate.timeToUserFormat(prefs.lastUpdate[catalog.path], '%d %b %Y %H.%M.%S')
+    p.syncStatus = 'Last update for this catalog: ' .. LrDate.timeToUserFormat(prefs.lastUpdate[catalog.path], '%d %b %Y %H.%M')
 end
 
 function PluginManager.saveSettings(p)
